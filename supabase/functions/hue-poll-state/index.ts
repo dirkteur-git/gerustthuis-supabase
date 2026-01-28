@@ -28,33 +28,8 @@ interface PollResult {
   error?: string
 }
 
-serve(async (req) => {
-  // Handle CORS
-  const corsResponse = handleCors(req)
-  if (corsResponse) return corsResponse
-
-  try {
-    // 1. Create Supabase client with service role
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL')!,
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-    )
-
-    // 2. Load active hue_config
-    const { data: config, error: configError } = await supabase
-      .from('hue_config')
-      .select('*')
-      .eq('status', 'active')
-      .single()
-
-    if (configError || !config) {
-      return new Response(
-        JSON.stringify({ success: false, error: 'No active Hue config found' }),
-        { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
-    }
-
-    const hueConfig = config as HueConfig
+async function pollSingleConfig(supabase: any, hueConfig: HueConfig): Promise<PollResult> {
+  const configId = hueConfig.id
     let accessToken = hueConfig.access_token
     let tokensRefreshed = false
 
@@ -524,10 +499,84 @@ serve(async (req) => {
       tokensRefreshed,
     }
 
-    console.log(`Poll complete: ${result.devicesChecked} devices, ${result.changesDetected} changes`)
+    console.log(`Poll complete for config ${configId}: ${result.devicesChecked} devices, ${result.changesDetected} changes`)
+
+    return result
+  } catch (error) {
+    console.error(`Poll error for config ${configId}:`, error)
+    return {
+      success: false,
+      devicesChecked: 0,
+      changesDetected: 0,
+      tokensRefreshed: false,
+      error: String(error),
+    }
+  }
+}
+
+serve(async (req) => {
+  // Handle CORS
+  const corsResponse = handleCors(req)
+  if (corsResponse) return corsResponse
+
+  try {
+    // 1. Create Supabase client with service role
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+    )
+
+    // 2. Load ALL active hue_configs (multi-tenant)
+    const { data: configs, error: configError } = await supabase
+      .from('hue_config')
+      .select('*')
+      .eq('status', 'active')
+
+    if (configError) {
+      return new Response(
+        JSON.stringify({ success: false, error: 'Failed to load configs: ' + configError.message }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
+    if (!configs || configs.length === 0) {
+      return new Response(
+        JSON.stringify({ success: false, error: 'No active Hue configs found' }),
+        { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
+    console.log(`Polling ${configs.length} active Hue config(s)...`)
+
+    // 3. Poll each config
+    const results: { configId: string; userEmail: string; result: PollResult }[] = []
+
+    for (const config of configs) {
+      const hueConfig = config as HueConfig
+      console.log(`Polling config for ${hueConfig.user_email}...`)
+      const result = await pollSingleConfig(supabase, hueConfig)
+      results.push({
+        configId: hueConfig.id,
+        userEmail: hueConfig.user_email,
+        result,
+      })
+    }
+
+    // 4. Summary
+    const totalDevices = results.reduce((sum, r) => sum + r.result.devicesChecked, 0)
+    const totalChanges = results.reduce((sum, r) => sum + r.result.changesDetected, 0)
+    const allSuccess = results.every(r => r.result.success)
+
+    console.log(`Poll complete: ${configs.length} configs, ${totalDevices} total devices, ${totalChanges} total changes`)
 
     return new Response(
-      JSON.stringify(result),
+      JSON.stringify({
+        success: allSuccess,
+        configsPolled: configs.length,
+        totalDevices,
+        totalChanges,
+        results,
+      }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
   } catch (error) {
