@@ -8,6 +8,7 @@ const HUE_LINK_URL = 'https://api.meethue.com/route/api/0/config'
 interface TokenRequest {
   code: string
   user_email: string
+  user_id: string
 }
 
 serve(async (req) => {
@@ -16,11 +17,11 @@ serve(async (req) => {
   if (corsResponse) return corsResponse
 
   try {
-    const { code, user_email } = await req.json() as TokenRequest
+    const { code, user_email, user_id } = await req.json() as TokenRequest
 
-    if (!code || !user_email) {
+    if (!code || !user_email || !user_id) {
       return new Response(
-        JSON.stringify({ error: 'Missing code or user_email' }),
+        JSON.stringify({ error: 'Missing code, user_email, or user_id' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
@@ -103,6 +104,7 @@ serve(async (req) => {
       .from('hue_config')
       .upsert({
         user_email,
+        user_id,
         access_token: tokens.access_token,
         refresh_token: tokens.refresh_token,
         token_expires_at: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
