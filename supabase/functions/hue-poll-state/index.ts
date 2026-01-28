@@ -30,10 +30,12 @@ interface PollResult {
 
 async function pollSingleConfig(supabase: any, hueConfig: HueConfig): Promise<PollResult> {
   const configId = hueConfig.id
+
+  try {
     let accessToken = hueConfig.access_token
     let tokensRefreshed = false
 
-    // 3. Check token expiry and refresh if needed
+    // Check token expiry and refresh if needed
     if (isTokenExpired(hueConfig)) {
       console.log('Token expired, refreshing...')
       const newTokens = await refreshToken(hueConfig.refresh_token)
