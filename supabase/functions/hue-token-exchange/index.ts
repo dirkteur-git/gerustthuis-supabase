@@ -29,6 +29,10 @@ serve(async (req) => {
     const clientId = Deno.env.get('HUE_CLIENT_ID')
     const clientSecret = Deno.env.get('HUE_CLIENT_SECRET')
 
+    // Debug logging - remove after debugging
+    console.log('HUE_CLIENT_ID starts with:', clientId?.substring(0, 8))
+    console.log('HUE_CLIENT_SECRET length:', clientSecret?.length)
+
     if (!clientId || !clientSecret) {
       return new Response(
         JSON.stringify({ error: 'Missing HUE_CLIENT_ID or HUE_CLIENT_SECRET' }),
@@ -123,6 +127,25 @@ serve(async (req) => {
         JSON.stringify({ error: 'Failed to save config', details: insertError }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
+    }
+
+    // 4. Trigger initial poll to load devices
+    console.log('Triggering initial poll...')
+    try {
+      const pollResponse = await fetch(
+        `${Deno.env.get('SUPABASE_URL')}/functions/v1/hue-poll-state`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+            'Content-Type': 'application/json',
+          },
+        }
+      )
+      const pollResult = await pollResponse.json()
+      console.log('Initial poll result:', pollResult)
+    } catch (pollError) {
+      console.error('Initial poll failed (non-blocking):', pollError)
     }
 
     return new Response(

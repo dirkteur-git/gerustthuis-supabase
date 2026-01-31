@@ -95,6 +95,7 @@ async function pollSingleConfig(supabase: any, hueConfig: HueConfig): Promise<Po
 
     const deviceMap = new Map(devices?.map(d => [d.hue_unique_id, d]) || [])
     const changes: any[] = []
+    const activityEvents: any[] = []  // Nieuwe array voor activity_events
     const now = new Date().toISOString()
 
     // 6. Process lights
@@ -129,6 +130,25 @@ async function pollSingleConfig(supabase: any, hueConfig: HueConfig): Promise<Po
       if (!device) continue
 
       const currentState = extractLightState(light)
+      const prevState = device.last_state || {}
+
+      // Check of on/off is veranderd (alleen dit telt als activiteit)
+      const wasOn = prevState.on === true
+      const isOn = currentState.on === true
+      const onOffChanged = (wasOn && !isOn) || (!wasOn && isOn)
+
+      if (onOffChanged) {
+        // Activity event: lamp aan of uit
+        activityEvents.push({
+          config_id: hueConfig.id,
+          device_id: device.id,
+          device_type: 'light',
+          room_name: roomName,
+          active: isOn,
+          state_value: null,
+          recorded_at: now,
+        })
+      }
 
       if (hasStateChanged(device.last_state, currentState)) {
         changes.push({
@@ -137,6 +157,7 @@ async function pollSingleConfig(supabase: any, hueConfig: HueConfig): Promise<Po
           previous_state: device.last_state,
           new_state: currentState,
           recorded_at: now,
+          room_name: roomName,
         })
 
         // Update device last_state and room_name
@@ -207,17 +228,43 @@ async function pollSingleConfig(supabase: any, hueConfig: HueConfig): Promise<Po
       const stateChanged = hasStateChanged(device.last_state, currentState)
       const lastUpdatedChanged = previousLastUpdated !== currentLastUpdated && currentLastUpdated && currentLastUpdated !== 'none'
 
+      // Bepaal recorded_at timestamp
+      let recordedAt = now
+      if (currentLastUpdated && currentLastUpdated !== 'none') {
+        recordedAt = currentLastUpdated.includes('Z')
+          ? currentLastUpdated
+          : currentLastUpdated + 'Z'
+      }
+
+      // Activity events voor motion sensor en button
+      if (sensorType === 'motion_sensor' && lastUpdatedChanged) {
+        activityEvents.push({
+          config_id: hueConfig.id,
+          device_id: device.id,
+          device_type: 'motion_sensor',
+          room_name: roomName,
+          active: null,
+          state_value: 'motion',
+          recorded_at: recordedAt,
+        })
+      } else if (sensorType === 'button') {
+        const prevButtonEvent = device.last_state?.buttonevent
+        const newButtonEvent = currentState.buttonevent
+        if (prevButtonEvent !== newButtonEvent && newButtonEvent != null) {
+          activityEvents.push({
+            config_id: hueConfig.id,
+            device_id: device.id,
+            device_type: 'button',
+            room_name: roomName,
+            active: null,
+            state_value: String(newButtonEvent),
+            recorded_at: recordedAt,
+          })
+        }
+      }
+
       // Log activity if lastupdated changed (motion detected) OR state changed
       if (lastUpdatedChanged || stateChanged) {
-        // Bepaal recorded_at timestamp
-        let recordedAt = now
-        if (currentLastUpdated && currentLastUpdated !== 'none') {
-          // Hue timestamps zijn UTC maar zonder 'Z'
-          recordedAt = currentLastUpdated.includes('Z')
-            ? currentLastUpdated
-            : currentLastUpdated + 'Z'
-        }
-
         // Log motion events when lastupdated changes (indicates movement detected)
         // This catches motion even when presence was already true
         if (sensorType === 'motion_sensor' && lastUpdatedChanged) {
@@ -227,6 +274,7 @@ async function pollSingleConfig(supabase: any, hueConfig: HueConfig): Promise<Po
             previous_state: device.last_state,
             new_state: currentState,
             recorded_at: recordedAt,
+            room_name: roomName,
           })
         }
 
@@ -323,6 +371,23 @@ async function pollSingleConfig(supabase: any, hueConfig: HueConfig): Promise<Po
         lastupdated: contact.contact_report?.changed,
       }
 
+      // Check of de changed timestamp is gewijzigd (echte deur activiteit)
+      const prevChanged = device.last_state?.lastupdated
+      const newChanged = currentState.lastupdated
+      const contactChanged = prevChanged !== newChanged && newChanged != null
+
+      if (contactChanged) {
+        activityEvents.push({
+          config_id: hueConfig.id,
+          device_id: device.id,
+          device_type: 'contact_sensor',
+          room_name: roomName,
+          active: null,
+          state_value: isOpen ? 'open' : 'closed',
+          recorded_at: newChanged,
+        })
+      }
+
       if (hasStateChanged(device.last_state, currentState)) {
         const recordedAt = contact.contact_report?.changed || now
 
@@ -332,6 +397,7 @@ async function pollSingleConfig(supabase: any, hueConfig: HueConfig): Promise<Po
           previous_state: device.last_state,
           new_state: currentState,
           recorded_at: recordedAt,
+          room_name: roomName,
         })
 
         // Update device last_state and room_name
@@ -353,7 +419,7 @@ async function pollSingleConfig(supabase: any, hueConfig: HueConfig): Promise<Po
       }
     }
 
-    // 9. Batch insert changes
+    // 9. Batch insert changes to raw_events
     if (changes.length > 0) {
       const { error: insertError } = await supabase
         .from('raw_events')
@@ -364,128 +430,92 @@ async function pollSingleConfig(supabase: any, hueConfig: HueConfig): Promise<Po
       }
     }
 
-    // 10. Group multi-capability sensors into physical devices
-    // Hue motion sensors have 3 capabilities: motion, temperature, light_level
-    // They share the same MAC prefix (first 23 chars of hue_unique_id)
-    const sensorGroups = new Map<string, {
-      motionUniqueId: string | null;
-      roomName: string | null;
-      name: string;
-      temperature: number | null;
-      lightlevel: number | null;
-      dark: boolean | null;
+    // 10. Batch insert activity_events
+    if (activityEvents.length > 0) {
+      const { error: activityError } = await supabase
+        .from('activity_events')
+        .insert(activityEvents)
+
+      if (activityError) {
+        console.error('Failed to insert activity_events:', activityError)
+      } else {
+        console.log(`Inserted ${activityEvents.length} activity events`)
+      }
+    }
+
+    // 11. Update room_activity gebaseerd op activity_events
+    // Groepeer activityEvents per room + 5-min window
+    const activityMap = new Map<string, {
+      configId: string
+      roomName: string
+      window: Date
+      triggerTypes: Set<string>
+      triggerCount: number
+      firstTrigger: Date
+      lastTrigger: Date
     }>()
 
-    for (const [_hueId, sensor] of Object.entries(sensors)) {
-      const uniqueId = (sensor as any).uniqueid
-      if (!uniqueId) continue
+    // TIJDELIJK: alleen deze kamers voor testen
+    const testRooms = ['Berging', 'Entree']
 
-      const sensorType = mapSensorType((sensor as any).type)
-      if (!['motion_sensor', 'temperature_sensor', 'light_sensor'].includes(sensorType)) continue
+    for (const event of activityEvents) {
+      if (!event.room_name) continue
 
-      const macPrefix = uniqueId.substring(0, 23)
-      if (!sensorGroups.has(macPrefix)) {
-        sensorGroups.set(macPrefix, {
-          motionUniqueId: null,
-          roomName: null,
-          name: 'Unknown Sensor',
-          temperature: null,
-          lightlevel: null,
-          dark: null,
+      // TIJDELIJK: alleen testRooms voor testen
+      if (!testRooms.includes(event.room_name)) continue
+
+      // Bereken 5-min window
+      const timestamp = new Date(event.recorded_at)
+      const windowStart = new Date(timestamp)
+      windowStart.setMinutes(Math.floor(windowStart.getMinutes() / 5) * 5)
+      windowStart.setSeconds(0)
+      windowStart.setMilliseconds(0)
+
+      const key = `${hueConfig.id}|${event.room_name}|${windowStart.toISOString()}`
+
+      if (!activityMap.has(key)) {
+        activityMap.set(key, {
+          configId: hueConfig.id,
+          roomName: event.room_name,
+          window: windowStart,
+          triggerTypes: new Set(),
+          triggerCount: 0,
+          firstTrigger: timestamp,
+          lastTrigger: timestamp,
         })
       }
 
-      const group = sensorGroups.get(macPrefix)!
-      const roomName = sensorRoomMap.get(uniqueId) || null
-      const state = (sensor as any).state || {}
+      const activity = activityMap.get(key)!
+      activity.triggerTypes.add(event.device_type)
+      activity.triggerCount++
+      if (timestamp < activity.firstTrigger) activity.firstTrigger = timestamp
+      if (timestamp > activity.lastTrigger) activity.lastTrigger = timestamp
+    }
 
-      if (sensorType === 'motion_sensor') {
-        group.motionUniqueId = uniqueId
-        group.name = (sensor as any).name
-        if (roomName) group.roomName = roomName
-      } else if (sensorType === 'temperature_sensor') {
-        // Temperature in 0.01°C from Hue
-        group.temperature = state.temperature !== undefined ? state.temperature / 100 : null
-        if (!group.roomName && roomName) group.roomName = roomName
-      } else if (sensorType === 'light_sensor') {
-        group.lightlevel = state.lightlevel ?? null
-        group.dark = state.dark ?? null
-        if (!group.roomName && roomName) group.roomName = roomName
+    // Upsert naar room_activity
+    for (const [_key, activity] of activityMap) {
+      const { error: upsertError } = await supabase
+        .from('room_activity')
+        .upsert({
+          config_id: activity.configId,
+          room_name: activity.roomName,
+          activity_window: activity.window.toISOString(),
+          trigger_types: [...activity.triggerTypes],
+          trigger_count: activity.triggerCount,
+          first_trigger_at: activity.firstTrigger.toISOString(),
+          last_trigger_at: activity.lastTrigger.toISOString(),
+        }, {
+          onConflict: 'config_id,room_name,activity_window',
+        })
+
+      if (upsertError) {
+        console.error('Failed to upsert room_activity:', upsertError)
       }
     }
 
-    // Upsert physical devices for each group and update motion sensor's last_state with temp/light
-    for (const [macPrefix, group] of sensorGroups) {
-      // Only process groups that have a motion sensor
-      if (!group.motionUniqueId) continue
+    console.log(`Updated ${activityMap.size} room activity windows`)
 
-      // Get the physical device
-      const { data: physicalDevice } = await supabase
-        .from('physical_devices')
-        .select('id')
-        .eq('config_id', hueConfig.id)
-        .eq('mac_prefix', macPrefix)
-        .single()
-
-      if (!physicalDevice) {
-        // Create if not exists
-        const { data: newPhys, error: physError } = await supabase
-          .from('physical_devices')
-          .insert({
-            config_id: hueConfig.id,
-            mac_prefix: macPrefix,
-            name: group.name,
-            room_name: group.roomName,
-          })
-          .select()
-          .single()
-
-        if (physError) {
-          console.error('Failed to create physical device:', physError)
-          continue
-        }
-
-        // Link motion sensor
-        if (newPhys) {
-          await supabase
-            .from('hue_devices')
-            .update({ physical_device_id: newPhys.id })
-            .eq('hue_unique_id', group.motionUniqueId)
-        }
-      } else {
-        // Update room name if needed
-        await supabase
-          .from('physical_devices')
-          .update({ room_name: group.roomName, name: group.name })
-          .eq('id', physicalDevice.id)
-
-        // Link motion sensor
-        await supabase
-          .from('hue_devices')
-          .update({ physical_device_id: physicalDevice.id })
-          .eq('hue_unique_id', group.motionUniqueId)
-      }
-
-      // Update motion sensor's last_state to include temperature and lightlevel
-      const motionDevice = deviceMap.get(group.motionUniqueId)
-      if (motionDevice) {
-        const enrichedState = {
-          ...motionDevice.last_state,
-          temperature: group.temperature,
-          lightlevel: group.lightlevel,
-          dark: group.dark,
-        }
-
-        await supabase
-          .from('hue_devices')
-          .update({ last_state: enrichedState })
-          .eq('id', motionDevice.id)
-      }
-    }
-
-    console.log(`Grouped ${sensorGroups.size} physical devices`)
-
-    // 11. Update last_sync_at
+    // 12. Update last_sync_at
     await supabase
       .from('hue_config')
       .update({
