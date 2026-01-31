@@ -36,9 +36,27 @@ CREATE TABLE IF NOT EXISTS sensor_health_history (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Voeg een hour kolom toe voor de unique constraint (date_trunc is niet IMMUTABLE)
+ALTER TABLE sensor_health_history ADD COLUMN IF NOT EXISTS recorded_hour TIMESTAMPTZ;
+
+-- Trigger om recorded_hour automatisch te vullen
+CREATE OR REPLACE FUNCTION set_sensor_health_recorded_hour()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.recorded_hour := date_trunc('hour', NEW.recorded_at);
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trigger_set_recorded_hour ON sensor_health_history;
+CREATE TRIGGER trigger_set_recorded_hour
+    BEFORE INSERT OR UPDATE ON sensor_health_history
+    FOR EACH ROW
+    EXECUTE FUNCTION set_sensor_health_recorded_hour();
+
 -- Unique constraint: één record per device per uur
 CREATE UNIQUE INDEX IF NOT EXISTS idx_sensor_health_history_device_hour
-    ON sensor_health_history(device_id, date_trunc('hour', recorded_at));
+    ON sensor_health_history(device_id, recorded_hour);
 
 -- Indexen voor queries
 CREATE INDEX IF NOT EXISTS idx_sensor_health_history_config ON sensor_health_history(config_id);
@@ -112,13 +130,15 @@ CREATE OR REPLACE FUNCTION record_sensor_health_snapshot()
 RETURNS INTEGER AS $$
 DECLARE
     v_count INTEGER := 0;
+    v_current_hour TIMESTAMPTZ := date_trunc('hour', NOW());
 BEGIN
     -- Insert health snapshot voor alle sensoren
-    INSERT INTO sensor_health_history (config_id, device_id, recorded_at, battery_percentage, is_alive, last_event_at)
+    INSERT INTO sensor_health_history (config_id, device_id, recorded_at, recorded_hour, battery_percentage, is_alive, last_event_at)
     SELECT
         d.config_id,
         d.id,
-        date_trunc('hour', NOW()),
+        NOW(),
+        v_current_hour,
         d.battery_percentage,
         CASE
             WHEN d.last_state_at > NOW() - INTERVAL '90 minutes' THEN true
@@ -128,11 +148,12 @@ BEGIN
     FROM hue_devices d
     WHERE d.device_type IN ('motion_sensor', 'contact_sensor')
       AND d.config_id IS NOT NULL
-    ON CONFLICT (device_id, date_trunc('hour', recorded_at))
+    ON CONFLICT (device_id, recorded_hour)
     DO UPDATE SET
         battery_percentage = EXCLUDED.battery_percentage,
         is_alive = EXCLUDED.is_alive,
-        last_event_at = EXCLUDED.last_event_at;
+        last_event_at = EXCLUDED.last_event_at,
+        recorded_at = NOW();
 
     GET DIAGNOSTICS v_count = ROW_COUNT;
 
