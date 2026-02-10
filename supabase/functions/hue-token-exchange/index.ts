@@ -69,7 +69,7 @@ serve(async (req) => {
     const tokens = await tokenResponse.json()
     console.log('Tokens received')
 
-    // 2. Link bridge to get username (whitelist)
+    // 2. Link bridge — activate linkbutton via remote API
     const linkResponse = await fetch(HUE_LINK_URL, {
       method: 'PUT',
       headers: {
@@ -79,7 +79,14 @@ serve(async (req) => {
       body: JSON.stringify({ linkbutton: true }),
     })
 
-    // Now create the whitelist entry
+    const linkBody = await linkResponse.text()
+    console.log('Link response:', linkResponse.status, linkBody)
+
+    if (!linkResponse.ok) {
+      console.error('Link button activation failed:', linkResponse.status, linkBody)
+    }
+
+    // 2b. Create whitelist entry (bridge username)
     const whitelistResponse = await fetch('https://api.meethue.com/route/api', {
       method: 'POST',
       headers: {
@@ -90,19 +97,40 @@ serve(async (req) => {
     })
 
     let bridgeUsername = null
+    let bridgeLinkError = null
+    const whitelistBody = await whitelistResponse.text()
+    console.log('Whitelist response:', whitelistResponse.status, whitelistBody)
+
     if (whitelistResponse.ok) {
-      const whitelistResult = await whitelistResponse.json()
-      if (Array.isArray(whitelistResult) && whitelistResult[0]?.success?.username) {
-        bridgeUsername = whitelistResult[0].success.username
-        console.log('Bridge username obtained:', bridgeUsername)
+      try {
+        const whitelistResult = JSON.parse(whitelistBody)
+        if (Array.isArray(whitelistResult) && whitelistResult[0]?.success?.username) {
+          bridgeUsername = whitelistResult[0].success.username
+          console.log('Bridge username obtained:', bridgeUsername)
+        } else if (Array.isArray(whitelistResult) && whitelistResult[0]?.error) {
+          bridgeLinkError = `Hue API error: ${whitelistResult[0].error.description || JSON.stringify(whitelistResult[0].error)}`
+          console.error('Bridge link error:', bridgeLinkError)
+        } else {
+          bridgeLinkError = `Onverwacht whitelist antwoord: ${whitelistBody.substring(0, 200)}`
+          console.error(bridgeLinkError)
+        }
+      } catch {
+        bridgeLinkError = `Kon whitelist antwoord niet lezen: ${whitelistBody.substring(0, 200)}`
+        console.error(bridgeLinkError)
       }
+    } else {
+      bridgeLinkError = `Whitelist request mislukt (HTTP ${whitelistResponse.status}): ${whitelistBody.substring(0, 200)}`
+      console.error(bridgeLinkError)
     }
 
     // 3. Save to database
+    // Only set status 'active' if bridge_username was obtained
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     )
+
+    const configStatus = bridgeUsername ? 'active' : 'pending'
 
     const { data: config, error: insertError } = await supabase
       .from('hue_config')
@@ -113,8 +141,8 @@ serve(async (req) => {
         refresh_token: tokens.refresh_token,
         token_expires_at: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
         bridge_username: bridgeUsername,
-        status: 'active',
-        last_error: null,
+        status: configStatus,
+        last_error: bridgeLinkError,
       }, {
         onConflict: 'user_email',
       })
@@ -129,23 +157,39 @@ serve(async (req) => {
       )
     }
 
-    // 4. Trigger initial poll to load devices
-    console.log('Triggering initial poll...')
-    try {
-      const pollResponse = await fetch(
-        `${Deno.env.get('SUPABASE_URL')}/functions/v1/hue-poll-state`,
-        {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
-            'Content-Type': 'application/json',
-          },
-        }
+    // 4. Trigger initial sync to load devices (only if bridge linked)
+    if (bridgeUsername) {
+      console.log('Triggering initial sync...')
+      try {
+        const pollResponse = await fetch(
+          `${Deno.env.get('SUPABASE_URL')}/functions/v1/hue-sync-state`,
+          {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+              'Content-Type': 'application/json',
+            },
+          }
+        )
+        const pollResult = await pollResponse.json()
+        console.log('Initial sync result:', pollResult)
+      } catch (pollError) {
+        console.error('Initial sync failed (non-blocking):', pollError)
+      }
+    }
+
+    // Return different response based on bridge link success
+    if (!bridgeUsername) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          config_id: config?.id,
+          bridge_username: null,
+          error: 'bridge_link_failed',
+          message: bridgeLinkError || 'Bridge koppeling mislukt. Probeer opnieuw.',
+        }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
-      const pollResult = await pollResponse.json()
-      console.log('Initial poll result:', pollResult)
-    } catch (pollError) {
-      console.error('Initial poll failed (non-blocking):', pollError)
     }
 
     return new Response(
@@ -153,9 +197,7 @@ serve(async (req) => {
         success: true,
         config_id: config?.id,
         bridge_username: bridgeUsername,
-        message: bridgeUsername
-          ? 'Hue connected successfully'
-          : 'Tokens saved, but bridge linking may have failed. You may need to press the bridge button and retry.',
+        message: 'Hue Bridge succesvol gekoppeld!',
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )

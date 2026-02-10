@@ -45,6 +45,19 @@ serve(async (req) => {
 
     for (const config of configs) {
       const hueConfig = config as HueConfig
+
+      // Skip configs without bridge_username (incomplete linking)
+      if (!hueConfig.bridge_username) {
+        console.warn(`Skipping config ${hueConfig.id} (${hueConfig.user_email}): no bridge_username`)
+        results.push({
+          configId: hueConfig.id,
+          userEmail: hueConfig.user_email,
+          success: false,
+          error: 'No bridge_username - bridge linking incomplete',
+        })
+        continue
+      }
+
       const configResult = await syncConfig(supabase, hueConfig)
       results.push({
         configId: hueConfig.id,
