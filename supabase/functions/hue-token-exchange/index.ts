@@ -1,5 +1,4 @@
-import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.8'
 import { corsHeaders, handleCors } from '../_shared/cors.ts'
 
 const HUE_TOKEN_URL = 'https://api.meethue.com/v2/oauth2/token'
@@ -11,7 +10,7 @@ interface TokenRequest {
   user_id: string
 }
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   // Handle CORS
   const corsResponse = handleCors(req)
   if (corsResponse) return corsResponse
