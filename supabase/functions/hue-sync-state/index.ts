@@ -160,12 +160,6 @@ async function syncConfig(supabase: any, hueConfig: HueConfig) {
       const currentState = extractLightState(light)
       const lastState = device.last_state || {}
 
-      // Update current_state in database (always)
-      await supabase
-        .from('hue_devices')
-        .update({ current_state: currentState })
-        .eq('id', device.id)
-
       // Compare on/off state
       const wasOn = lastState.on === true
       const isOn = currentState.on === true
@@ -302,12 +296,6 @@ async function syncContactSensors(
       changed: currentChanged,
     }
 
-    // Update current_state in database (always)
-    await supabase
-      .from('hue_devices')
-      .update({ current_state: currentState })
-      .eq('id', device.id)
-
     // Compare changed timestamp
     const lastChanged = device.last_state?.changed
 
@@ -377,12 +365,6 @@ async function syncMotionSensors(
     // Current state from Hue API
     const currentState = extractSensorState(sensor)
     const lastState = device.last_state || {}
-
-    // Update current_state in database (always)
-    await supabase
-      .from('hue_devices')
-      .update({ current_state: currentState })
-      .eq('id', device.id)
 
     // Compare lastupdated timestamp
     const lastUpdated = lastState.lastupdated
@@ -460,12 +442,6 @@ async function syncButtons(
     const currentState = extractSensorState(sensor)
     const lastState = device.last_state || {}
 
-    // Update current_state in database (always, including buttonevent)
-    await supabase
-      .from('hue_devices')
-      .update({ current_state: currentState })
-      .eq('id', device.id)
-
     // Compare lastupdated timestamp
     const lastUpdated = lastState.lastupdated
     const currentUpdated = currentState.lastupdated
@@ -534,7 +510,7 @@ async function discoverDevices(
       device_type: 'light',
       name: (light as any).name || `Light ${hueId}`,
       room_name: lightRoomMap.get(`light_${hueId}`) || null,
-      current_state: extractLightState(light),
+      last_state: extractLightState(light),
     })
     existingIds.add(uniqueId) // Prevent duplicates within same batch
   }
@@ -554,7 +530,7 @@ async function discoverDevices(
       device_type: deviceType,
       name: (sensor as any).name || `Sensor ${sensorId}`,
       room_name: sensorRoomMap.get(uniqueId) || null,
-      current_state: extractSensorState(sensor),
+      last_state: extractSensorState(sensor),
     })
     existingIds.add(uniqueId)
   }
@@ -588,7 +564,7 @@ async function discoverDevices(
       device_type: 'contact_sensor',
       name: deviceName,
       room_name: roomName,
-      current_state: {
+      last_state: {
         open: contact.contact_report?.state === 'no_contact',
         changed: contact.contact_report?.changed,
       },
