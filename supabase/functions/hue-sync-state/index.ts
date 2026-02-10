@@ -121,10 +121,17 @@ async function syncConfig(supabase: any, hueConfig: HueConfig) {
       fetchRoomsV2(accessToken, hueConfig.bridge_username),
     ])
 
-    // Build room map
+    // Build room maps
     const lightRoomMap = buildRoomMap(groups)
+    const sensorRoomMap = buildSensorRoomMap(sensors, groups)
 
-    // Load existing light devices from database
+    // Auto-discover new devices (lights, sensors, contacts, buttons)
+    const discoveryResult = await discoverDevices(
+      supabase, hueConfig.id, lights, sensors, contactSensors, groups,
+      lightRoomMap, sensorRoomMap, devicesV2, roomsV2
+    )
+
+    // Load existing light devices from database (after discovery so new ones are included)
     const { data: devices } = await supabase
       .from('hue_devices')
       .select('*')
@@ -219,8 +226,15 @@ async function syncConfig(supabase: any, hueConfig: HueConfig) {
       }
     }
 
+    // Update last_sync_at
+    await supabase
+      .from('hue_config')
+      .update({ last_sync_at: new Date().toISOString() })
+      .eq('id', hueConfig.id)
+
     return {
       success: true,
+      devicesDiscovered: discoveryResult.totalAdded,
       lightsChecked,
       lightsChanged: changesDetected,
       contactsChecked: contactResult.contactsChecked,
@@ -485,6 +499,120 @@ async function syncButtons(
   }
 
   return { buttonsChecked, changesDetected }
+}
+
+// Auto-discover devices from Hue API and insert into hue_devices
+async function discoverDevices(
+  supabase: any,
+  configId: string,
+  lights: Record<string, any>,
+  sensors: Record<string, any>,
+  contactSensors: any[],
+  groups: Record<string, any>,
+  lightRoomMap: Map<string, string>,
+  sensorRoomMap: Map<string, string>,
+  devicesV2: any[],
+  roomsV2: any[],
+) {
+  // Load ALL existing devices for this config (all types)
+  const { data: existingDevices } = await supabase
+    .from('hue_devices')
+    .select('hue_unique_id')
+    .eq('config_id', configId)
+
+  const existingIds = new Set(existingDevices?.map((d: any) => d.hue_unique_id) || [])
+  const newDevices: any[] = []
+
+  // 1. Discover lights
+  for (const [hueId, light] of Object.entries(lights)) {
+    const uniqueId = (light as any).uniqueid
+    if (!uniqueId || existingIds.has(uniqueId)) continue
+
+    newDevices.push({
+      config_id: configId,
+      hue_id: hueId,
+      hue_unique_id: uniqueId,
+      device_type: 'light',
+      name: (light as any).name || `Light ${hueId}`,
+      room_name: lightRoomMap.get(`light_${hueId}`) || null,
+      current_state: extractLightState(light),
+    })
+    existingIds.add(uniqueId) // Prevent duplicates within same batch
+  }
+
+  // 2. Discover sensors (motion, buttons, temperature, light level)
+  for (const [sensorId, sensor] of Object.entries(sensors)) {
+    const uniqueId = (sensor as any).uniqueid
+    if (!uniqueId || existingIds.has(uniqueId)) continue
+
+    const deviceType = mapSensorType((sensor as any).type)
+    if (deviceType === 'unknown') continue
+
+    newDevices.push({
+      config_id: configId,
+      hue_id: sensorId,
+      hue_unique_id: uniqueId,
+      device_type: deviceType,
+      name: (sensor as any).name || `Sensor ${sensorId}`,
+      room_name: sensorRoomMap.get(uniqueId) || null,
+      current_state: extractSensorState(sensor),
+    })
+    existingIds.add(uniqueId)
+  }
+
+  // 3. Discover contact sensors (v2 API)
+  // Build device ID → room name map from v2 rooms
+  const deviceRoomMap = new Map<string, string>()
+  for (const room of roomsV2) {
+    const roomName = room.metadata?.name
+    for (const child of room.children || []) {
+      if (child.rtype === 'device') {
+        deviceRoomMap.set(child.rid, roomName)
+      }
+    }
+  }
+
+  for (const contact of contactSensors) {
+    const uniqueId = contact.id
+    if (!uniqueId || existingIds.has(uniqueId)) continue
+
+    // Find device name from v2 devices
+    const ownerDeviceId = contact.owner?.rid
+    const ownerDevice = devicesV2.find((d: any) => d.id === ownerDeviceId)
+    const deviceName = ownerDevice?.metadata?.name || `Contact sensor`
+    const roomName = deviceRoomMap.get(ownerDeviceId) || null
+
+    newDevices.push({
+      config_id: configId,
+      hue_id: uniqueId, // v2 API uses UUID as ID
+      hue_unique_id: uniqueId,
+      device_type: 'contact_sensor',
+      name: deviceName,
+      room_name: roomName,
+      current_state: {
+        open: contact.contact_report?.state === 'no_contact',
+        changed: contact.contact_report?.changed,
+      },
+    })
+    existingIds.add(uniqueId)
+  }
+
+  // Insert all new devices
+  let totalAdded = 0
+  if (newDevices.length > 0) {
+    const { error } = await supabase
+      .from('hue_devices')
+      .upsert(newDevices, { onConflict: 'config_id,hue_unique_id' })
+
+    if (error) {
+      console.error('Failed to insert discovered devices:', error)
+    } else {
+      totalAdded = newDevices.length
+      console.log(`Discovered ${totalAdded} new devices (${newDevices.filter(d => d.device_type === 'light').length} lights, ${newDevices.filter(d => d.device_type === 'motion_sensor').length} motion, ${newDevices.filter(d => d.device_type === 'contact_sensor').length} contact, ${newDevices.filter(d => d.device_type === 'button').length} buttons)`)
+    }
+  }
+
+  return { totalAdded }
 }
 
 // Update room_activity with aggregated data from new activity events
