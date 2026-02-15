@@ -45,6 +45,7 @@ CREATE TRIGGER trigger_residents_updated_at
 -- ============================================================
 
 ALTER TABLE household_members
+    DROP CONSTRAINT IF EXISTS valid_role,
     DROP CONSTRAINT IF EXISTS household_members_role_check,
     ADD CONSTRAINT household_members_role_check
         CHECK (role IN ('admin', 'viewer', 'installer'));
@@ -55,6 +56,7 @@ ALTER TABLE household_members
 -- ============================================================
 
 ALTER TABLE household_invitations
+    DROP CONSTRAINT IF EXISTS valid_invitation_role,
     DROP CONSTRAINT IF EXISTS household_invitations_role_check,
     ADD CONSTRAINT household_invitations_role_check
         CHECK (role IN ('admin', 'viewer', 'installer'));
@@ -125,20 +127,25 @@ CREATE POLICY "Users view own activity_events" ON activity_events
         )
     );
 
--- 5b. room_activity
-DROP POLICY IF EXISTS "Users view own room activity" ON room_activity;
-CREATE POLICY "Users view own room activity" ON room_activity
-    FOR SELECT TO authenticated
-    USING (
-        config_id IN (SELECT get_accessible_config_ids())
-        AND EXISTS (
-            SELECT 1 FROM household_members hm
-            JOIN households h ON hm.household_id = h.id
-            WHERE hm.user_id = auth.uid()
-              AND h.config_id = room_activity.config_id
-              AND hm.role IN ('admin', 'viewer')
-        )
-    );
+-- 5b. room_activity (alleen als de tabel bestaat)
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'room_activity') THEN
+        DROP POLICY IF EXISTS "Users view own room activity" ON room_activity;
+        EXECUTE 'CREATE POLICY "Users view own room activity" ON room_activity
+            FOR SELECT TO authenticated
+            USING (
+                config_id IN (SELECT get_accessible_config_ids())
+                AND EXISTS (
+                    SELECT 1 FROM household_members hm
+                    JOIN households h ON hm.household_id = h.id
+                    WHERE hm.user_id = auth.uid()
+                      AND h.config_id = room_activity.config_id
+                      AND hm.role IN (''admin'', ''viewer'')
+                )
+            )';
+    END IF;
+END $$;
 
 -- 5c. room_activity_hourly
 DROP POLICY IF EXISTS "Users view own room_activity_hourly" ON room_activity_hourly;
