@@ -8,6 +8,7 @@ interface SignupRequest {
   email: string
   name?: string
   referral_source?: string
+  postcode?: string
 }
 
 const MAX_REQUESTS_PER_HOUR = 3
@@ -25,7 +26,7 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { email, name, referral_source } = await req.json() as SignupRequest
+    const { email, name, referral_source, postcode } = await req.json() as SignupRequest
 
     // Validatie
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -93,6 +94,7 @@ Deno.serve(async (req) => {
         email: email.toLowerCase().trim(),
         name: name?.trim() || null,
         referral_source: referral_source || null,
+        postcode: postcode?.trim().toUpperCase() || null,
         gdpr_consent: true,
       })
       .select('id, confirm_token, email, name')
