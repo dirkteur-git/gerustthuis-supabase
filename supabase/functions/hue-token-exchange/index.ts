@@ -131,7 +131,7 @@ Deno.serve(async (req) => {
 
     const configStatus = bridgeUsername ? 'active' : 'pending'
 
-    const { data: config, error: insertError } = await supabase
+    const { data: config, error: insertError } = await supabase.schema('integrations')
       .from('hue_config')
       .upsert({
         user_email,

@@ -28,7 +28,7 @@ Deno.serve(async (req) => {
     )
 
     // Load active hue configs
-    const { data: configs, error: configError } = await supabase
+    const { data: configs, error: configError } = await supabase.schema('integrations')
       .from('hue_config')
       .select('*')
       .eq('status', 'active')
@@ -93,7 +93,7 @@ async function syncConfig(supabase: any, hueConfig: HueConfig) {
       if (newTokens) {
         accessToken = newTokens.access_token
 
-        await supabase
+        await supabase.schema('integrations')
           .from('hue_config')
           .update({
             access_token: newTokens.access_token,
@@ -131,7 +131,7 @@ async function syncConfig(supabase: any, hueConfig: HueConfig) {
     )
 
     // Load existing light devices from database (after discovery so new ones are included)
-    const { data: devices } = await supabase
+    const { data: devices } = await supabase.schema('integrations')
       .from('hue_devices')
       .select('*')
       .eq('config_id', hueConfig.id)
@@ -180,7 +180,7 @@ async function syncConfig(supabase: any, hueConfig: HueConfig) {
         })
 
         // Update last_state to current_state
-        await supabase
+        await supabase.schema('integrations')
           .from('hue_devices')
           .update({ last_state: currentState, last_state_at: now })
           .eq('id', device.id)
@@ -205,7 +205,7 @@ async function syncConfig(supabase: any, hueConfig: HueConfig) {
     // Insert activity events (lights + contacts + motion + buttons combined)
     let roomActivityUpdated = 0
     if (activityEvents.length > 0) {
-      const { error: insertError } = await supabase
+      const { error: insertError } = await supabase.schema('activity')
         .from('activity_events')
         .insert(activityEvents)
 
@@ -220,7 +220,7 @@ async function syncConfig(supabase: any, hueConfig: HueConfig) {
     }
 
     // Update last_sync_at
-    await supabase
+    await supabase.schema('integrations')
       .from('hue_config')
       .update({ last_sync_at: new Date().toISOString() })
       .eq('id', hueConfig.id)
@@ -267,7 +267,7 @@ async function syncContactSensors(
   }
 
   // Load existing contact sensor devices from database
-  const { data: devices } = await supabase
+  const { data: devices } = await supabase.schema('integrations')
     .from('hue_devices')
     .select('*')
     .eq('config_id', hueConfig.id)
@@ -314,7 +314,7 @@ async function syncContactSensors(
       })
 
       // Update last_state to current_state
-      await supabase
+      await supabase.schema('integrations')
         .from('hue_devices')
         .update({ last_state: currentState, last_state_at: now })
         .eq('id', device.id)
@@ -337,7 +337,7 @@ async function syncMotionSensors(
   const sensorRoomMap = buildSensorRoomMap(sensors, groups)
 
   // Load existing motion sensor devices from database
-  const { data: devices } = await supabase
+  const { data: devices } = await supabase.schema('integrations')
     .from('hue_devices')
     .select('*')
     .eq('config_id', hueConfig.id)
@@ -390,7 +390,7 @@ async function syncMotionSensors(
       })
 
       // Update last_state to current_state
-      await supabase
+      await supabase.schema('integrations')
         .from('hue_devices')
         .update({ last_state: currentState, last_state_at: now })
         .eq('id', device.id)
@@ -413,7 +413,7 @@ async function syncButtons(
   const sensorRoomMap = buildSensorRoomMap(sensors, groups)
 
   // Load existing button devices from database
-  const { data: devices } = await supabase
+  const { data: devices } = await supabase.schema('integrations')
     .from('hue_devices')
     .select('*')
     .eq('config_id', hueConfig.id)
@@ -466,7 +466,7 @@ async function syncButtons(
       })
 
       // Update last_state to current_state (includes buttonevent)
-      await supabase
+      await supabase.schema('integrations')
         .from('hue_devices')
         .update({ last_state: currentState, last_state_at: now })
         .eq('id', device.id)
@@ -490,7 +490,7 @@ async function discoverDevices(
   roomsV2: any[],
 ) {
   // Load ALL existing devices for this config (all types)
-  const { data: existingDevices } = await supabase
+  const { data: existingDevices } = await supabase.schema('integrations')
     .from('hue_devices')
     .select('hue_unique_id')
     .eq('config_id', configId)
@@ -575,7 +575,7 @@ async function discoverDevices(
   // Insert all new devices
   let totalAdded = 0
   if (newDevices.length > 0) {
-    const { error } = await supabase
+    const { error } = await supabase.schema('integrations')
       .from('hue_devices')
       .upsert(newDevices, { onConflict: 'config_id,hue_unique_id' })
 
