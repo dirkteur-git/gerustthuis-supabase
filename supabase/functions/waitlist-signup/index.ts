@@ -88,17 +88,32 @@ Deno.serve(async (req) => {
     await supabase.rpc('cleanup_waitlist_rate_limits')
 
     // ── INSERT in waitlist ─────────────────────────────────────
-    const { data: signup, error: insertError } = await supabase
+    const cleanPostcode = postcode?.trim().toUpperCase() || null
+    const insertPayload: Record<string, unknown> = {
+      email: email.toLowerCase().trim(),
+      name: name?.trim() || null,
+      referral_source: referral_source || null,
+      postcode: cleanPostcode,
+      gdpr_consent: true,
+    }
+
+    let { data: signup, error: insertError } = await supabase
       .from('waitlist')
-      .insert({
-        email: email.toLowerCase().trim(),
-        name: name?.trim() || null,
-        referral_source: referral_source || null,
-        postcode: postcode?.trim().toUpperCase() || null,
-        gdpr_consent: true,
-      })
+      .insert(insertPayload)
       .select('id, confirm_token, email, name')
       .single()
+
+    // Fallback: als postcode kolom niet bestaat (migratie 027 niet toegepast)
+    if (insertError?.message?.includes('postcode')) {
+      const { postcode: _removed, ...payloadWithoutPostcode } = insertPayload
+      const result = await supabase
+        .from('waitlist')
+        .insert(payloadWithoutPostcode)
+        .select('id, confirm_token, email, name')
+        .single()
+      signup = result.data
+      insertError = result.error
+    }
 
     if (insertError) {
       // Duplicate email
@@ -210,7 +225,7 @@ Deno.serve(async (req) => {
           const contactInfo = JSON.stringify({
             'Contact Email': signup.email,
             'First Name': signup.name || '',
-            'Zip Code': signup.postcode || '',
+            'Zip Code': cleanPostcode || '',
           })
 
           await fetch(`https://campaigns.zoho.eu/api/v1.1/json/listsubscribe?resfmt=JSON&listkey=${zohoListKey}&contactinfo=${encodeURIComponent(contactInfo)}`, {
