@@ -210,6 +210,7 @@ Deno.serve(async (req) => {
           const contactInfo = JSON.stringify({
             'Contact Email': signup.email,
             'First Name': signup.name || '',
+            'Zip Code': signup.postcode || '',
           })
 
           await fetch(`https://campaigns.zoho.eu/api/v1.1/json/listsubscribe?resfmt=JSON&listkey=${zohoListKey}&contactinfo=${encodeURIComponent(contactInfo)}`, {
