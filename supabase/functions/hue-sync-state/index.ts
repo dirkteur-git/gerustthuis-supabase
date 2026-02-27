@@ -15,7 +15,7 @@ import {
   fetchRoomsV2,
   type HueConfig,
 } from '../_shared/hue-client.ts'
-import { corsHeaders, handleCors } from '../_shared/cors.ts'
+import { getCorsHeaders, handleCors } from '../_shared/cors.ts'
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req)
@@ -36,7 +36,7 @@ Deno.serve(async (req) => {
     if (configError || !configs || configs.length === 0) {
       return new Response(
         JSON.stringify({ success: false, error: 'No active Hue configs found' }),
-        { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        { status: 404, headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' } }
       )
     }
 
@@ -70,13 +70,13 @@ Deno.serve(async (req) => {
         success: true,
         results,
       }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      { headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' } }
     )
   } catch (error) {
     console.error('Sync error:', error)
     return new Response(
       JSON.stringify({ success: false, error: String(error) }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      { status: 500, headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' } }
     )
   }
 })

@@ -2,7 +2,7 @@
 // Handles waitlist signups with rate limiting, DB insert, and confirmation email
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.8'
-import { corsHeaders, handleCors } from '../_shared/cors.ts'
+import { getCorsHeaders, handleCors } from '../_shared/cors.ts'
 
 interface SignupRequest {
   email: string
@@ -21,7 +21,7 @@ Deno.serve(async (req) => {
   if (req.method !== 'POST') {
     return new Response(
       JSON.stringify({ error: 'Method not allowed' }),
-      { status: 405, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      { status: 405, headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' } }
     )
   }
 
@@ -32,7 +32,7 @@ Deno.serve(async (req) => {
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return new Response(
         JSON.stringify({ error: 'Ongeldig e-mailadres' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        { status: 400, headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' } }
       )
     }
 
@@ -78,7 +78,7 @@ Deno.serve(async (req) => {
         if (updated && updated.request_count > MAX_REQUESTS_PER_HOUR) {
           return new Response(
             JSON.stringify({ error: 'Te veel aanmeldingen. Probeer het later opnieuw.' }),
-            { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            { status: 429, headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' } }
           )
         }
       }
@@ -120,13 +120,13 @@ Deno.serve(async (req) => {
       if (insertError.code === '23505') {
         return new Response(
           JSON.stringify({ error: 'DUPLICATE', message: 'Dit e-mailadres staat al op de wachtlijst' }),
-          { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          { status: 409, headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' } }
         )
       }
       console.error('Insert error:', insertError)
       return new Response(
         JSON.stringify({ error: 'Aanmelding mislukt' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        { status: 500, headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' } }
       )
     }
 
@@ -258,14 +258,14 @@ Deno.serve(async (req) => {
         id: signup.id,
         message: 'Aanmelding geslaagd! Check je email voor bevestiging.',
       }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      { headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' } }
     )
 
   } catch (error) {
     console.error('Waitlist signup error:', error)
     return new Response(
       JSON.stringify({ error: 'Er ging iets mis. Probeer het opnieuw.' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      { status: 500, headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' } }
     )
   }
 })

@@ -1,5 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.8'
-import { corsHeaders, handleCors } from '../_shared/cors.ts'
+import { getCorsHeaders, handleCors } from '../_shared/cors.ts'
 
 const HUE_TOKEN_URL = 'https://api.meethue.com/v2/oauth2/token'
 const HUE_LINK_URL = 'https://api.meethue.com/route/api/0/config'
@@ -21,21 +21,17 @@ Deno.serve(async (req) => {
     if (!code || !user_email || !user_id) {
       return new Response(
         JSON.stringify({ error: 'Missing code, user_email, or user_id' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        { status: 400, headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' } }
       )
     }
 
     const clientId = Deno.env.get('HUE_CLIENT_ID')
     const clientSecret = Deno.env.get('HUE_CLIENT_SECRET')
 
-    // Debug logging - remove after debugging
-    console.log('HUE_CLIENT_ID starts with:', clientId?.substring(0, 8))
-    console.log('HUE_CLIENT_SECRET length:', clientSecret?.length)
-
     if (!clientId || !clientSecret) {
       return new Response(
         JSON.stringify({ error: 'Missing HUE_CLIENT_ID or HUE_CLIENT_SECRET' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        { status: 500, headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' } }
       )
     }
 
@@ -61,7 +57,7 @@ Deno.serve(async (req) => {
       console.error('Token exchange failed:', error)
       return new Response(
         JSON.stringify({ error: 'Token exchange failed', details: error }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        { status: 400, headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' } }
       )
     }
 
@@ -152,7 +148,7 @@ Deno.serve(async (req) => {
       console.error('Failed to save config:', insertError)
       return new Response(
         JSON.stringify({ error: 'Failed to save config', details: insertError }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        { status: 500, headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' } }
       )
     }
 
@@ -187,7 +183,7 @@ Deno.serve(async (req) => {
           error: 'bridge_link_failed',
           message: bridgeLinkError || 'Bridge koppeling mislukt. Probeer opnieuw.',
         }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        { status: 400, headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' } }
       )
     }
 
@@ -198,14 +194,14 @@ Deno.serve(async (req) => {
         bridge_username: bridgeUsername,
         message: 'Hue Bridge succesvol gekoppeld!',
       }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      { headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' } }
     )
   } catch (error) {
     console.error('Token exchange error:', error)
 
     return new Response(
       JSON.stringify({ error: String(error) }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      { status: 500, headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' } }
     )
   }
 })

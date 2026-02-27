@@ -5,7 +5,7 @@
 //   GA4_SERVICE_ACCOUNT_KEY  — JSON string van Google service account
 //   GA4_PROPERTY_ID          — GA4 property ID (bijv. "123456789")
 
-import { corsHeaders, handleCors } from '../_shared/cors.ts'
+import { getCorsHeaders, handleCors } from '../_shared/cors.ts'
 
 // --- Google Auth helpers ---
 
@@ -141,7 +141,7 @@ Deno.serve(async (req: Request) => {
           error: 'NOT_CONFIGURED',
           message: 'GA4 is nog niet geconfigureerd. Stel GA4_SERVICE_ACCOUNT_KEY en GA4_PROPERTY_ID in als Supabase secrets.',
         }),
-        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        { status: 200, headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' } }
       )
     }
 
@@ -225,13 +225,13 @@ Deno.serve(async (req: Request) => {
         success: true,
         data: { daily, totals, avgBounce, avgDuration, pages, sources },
       }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      { headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' } }
     )
   } catch (error) {
     console.error('GA4 analytics error:', error)
     return new Response(
       JSON.stringify({ success: false, error: String(error) }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      { status: 500, headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' } }
     )
   }
 })
